@@ -49,12 +49,10 @@ namespace IonArchitectKnifeMod
             // 2. Регистрируем статью в Nautilus
             PDAHandler.AddEncyclopediaEntry(ionKnifeEntry);
 
-
-            // Регистрируем статью в Nautilus
-            PDAHandler.AddEncyclopediaEntry(ionKnifeEntry);
-
-
             CustomPrefab ionKnifePrefab = new CustomPrefab(IonKnifeInfo);
+
+            // Сообщаем Nautilus, что за основу 3D-логики и поведения нужно взять оригинальный нож игры
+            ionKnifePrefab.SetGameObject(new CloneTemplate(ionKnifePrefab.Info, TechType.Knife));
 
             // Клонируем модель обычного ножа и вешаем кастомизацию
             CloneTemplate knifeClone = new CloneTemplate(IonKnifeInfo, TechType.Knife);
@@ -80,7 +78,7 @@ namespace IonArchitectKnifeMod
 
             // Автоматическое открытие чертежа при изучении Ионной батарейки
             ionKnifePrefab.SetUnlock(TechType.PrecursorIonBattery);
-
+            ionKnifePrefab.SetEquipment(EquipmentType.Hand);
             ionKnifePrefab.Register();
 
             Harmony harmony = new Harmony("com.username.ionarchitectknife");
@@ -89,27 +87,45 @@ namespace IonArchitectKnifeMod
             Logger.LogInfo("Мод Ion Architect Knife успешно загружен вместе с локализованной статьей КПК!");
 
         }
-
         private void ModifyKnifeAppearance(GameObject prefab)
         {
             // ==========================================
-            // БАЗОВАЯ НАСТРОЙКА ИНСТРУМЕНТА (Ножа)
+            // ИСПРАВЛЕНИЕ АНИМАЦИИ, ПОЗИЦИИ И УДАРОВ
             // ==========================================
 
-            // 1. Добавляем компонент ножа
-            Knife knife = prefab.AddComponent<Knife>();
-
-            // 2. Настраиваем урон и дистанцию
+            // 1. Настраиваем урон и дистанцию на компоненте Knife, который достался от клона
+            Knife knife = prefab.GetComponent<Knife>();
+            if (knife == null)
+            {
+                knife = prefab.AddComponent<Knife>();
+            }
             knife.damage = 250f;
             knife.attackDist = 3.0f;
 
-            // 4. Настраиваем физику и возможность подбирать предмет
+            // 2. Делаем физику подбора активной
             Pickupable pickupable = prefab.GetComponent<Pickupable>();
             if (pickupable == null)
             {
                 pickupable = prefab.AddComponent<Pickupable>();
             }
             pickupable.isPickupable = true;
+
+            // 3. Выравниваем кастомную визуальную часть мода
+            // Так как мы используем оригинальный скелет ножа, нам нужно спрятать стандартное лезвие
+            // и прикрепить наши новые ионные эффекты и частицы к самому центру объекта
+            foreach (Transform child in prefab.transform)
+            {
+                // Если внутри префаба есть старая базовая модель игры, скрываем её рендереры
+                if (child.name.Contains("model") || child.name.Contains("Mesh") || child.name.Contains("weapon"))
+                {
+                    var oldRenderers = child.GetComponentsInChildren<Renderer>();
+                    foreach (var r in oldRenderers) r.enabled = false;
+                }
+            }
+
+            // Корректируем базовую позицию префаба, чтобы он не улетал
+            prefab.transform.localPosition = Vector3.zero;
+            prefab.transform.localRotation = Quaternion.identity;
 
             // ==========================================
 
