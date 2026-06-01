@@ -1,0 +1,256 @@
+using BepInEx;
+using HarmonyLib;
+using Nautilus.Assets;
+using Nautilus.Assets.Gadgets;
+using Nautilus.Assets.PrefabTemplates;
+using Nautilus.Crafting;
+using Nautilus.Handlers; // Подключаем хэндлеры Nautilus
+using System.Collections.Generic;
+using System.Runtime.Remoting.Messaging;
+using UnityEngine;
+using FMODUnity;
+
+namespace IonArchitectKnifeMod
+{
+    [BepInPlugin("com.username.ionarchitectknife", "Ion Architect Knife", "1.4.0")]
+    [BepInDependency("com.snmodding.nautilus", BepInDependency.DependencyFlags.HardDependency)]
+    public class MainPlugin : BaseUnityPlugin
+    {
+        public static PrefabInfo IonKnifeInfo { get; private set; }
+
+        // Пути к оригинальным звукам Предтеч в файлах игры
+        public const string StrikeSoundPath = "event:/precursor/teleporter/teleporter_usable";
+        public const string AmbientCracklySoundPath = "event:/precursor/ion_cube_ambient";
+
+        private void Awake()
+        {
+            // 1. Регистрируем уникальные языковые ключи для предмета
+            IonKnifeInfo = PrefabInfo.WithTechType("IonArchitectKnife", "IonKnife_Name", "IonKnife_Desc")
+                .WithIcon(SpriteManager.Get(TechType.HeatBlade));
+
+            // Локализация названия и описания ножа
+            LanguageHandler.SetLanguageLine("IonKnife_Name", "Ion Architect Knife");
+            LanguageHandler.SetLanguageLine("IonKnife_Desc", "Precursor knife. Emits sound on hit, crackles in hand, and cooks fish.");
+
+            // 2. ЛОКАЛИЗАЦИЯ СТАТЬИ КПК (Заголовок и основной текст)
+            LanguageHandler.SetLanguageLine("IonKnife_PDATitle", "Ion Blade: Architect Artifact Analysis");
+            LanguageHandler.SetLanguageLine("IonKnife_PDATitle_popup", "New entry in the PDA: Ion Knife");
+            LanguageHandler.SetLanguageLine("Ency_IonKnife_PDATitle", "SYNTHESIS SUCCESSFUL.\n\nBy integrating a Precursor Ion Battery with carbon-hardened crystalline rubies, the standard survival tool's structural matrix has been completely altered.\n\nKey Discoveries:\n1. Thermal Conversion: The localized ion field reaches temperatures sufficient to instantly flash-cook small aquatic fauna upon contact.\n2. Ambient Resonance: The blade maintains a low-frequency hum, physically illuminating immediate surroundings up to 3 meters.\n\nWARNING: High energy output. Handle with extreme caution.");
+
+            // 3. РЕГИСТРАЦИЯ ЗАПИСИ В КПК
+            // 1. Создаем объект данных для статьи (Путь изменен на Инопланетные данные / Артефакты)
+            PDAEncyclopedia.EntryData ionKnifeEntry = new PDAEncyclopedia.EntryData()
+            {
+                key = "IonKnife_PDATitle",
+                path = "AlienData/Artifacts", // Путь к вкладке Инопланетные данные -> Артефакты
+                nodes = new string[] { "AlienData", "Artifacts" } // Структура дерева папок в КПК
+            };
+
+            // 2. Регистрируем статью в Nautilus
+            PDAHandler.AddEncyclopediaEntry(ionKnifeEntry);
+
+
+            // Регистрируем статью в Nautilus
+            PDAHandler.AddEncyclopediaEntry(ionKnifeEntry);
+
+
+            CustomPrefab ionKnifePrefab = new CustomPrefab(IonKnifeInfo);
+
+            // Клонируем модель обычного ножа и вешаем кастомизацию
+            CloneTemplate knifeClone = new CloneTemplate(IonKnifeInfo, TechType.Knife);
+            knifeClone.ModifyPrefab += ModifyKnifeAppearance;
+            ionKnifePrefab.SetGameObject(knifeClone);
+
+            // Рецепт крафта: 1 Нож, 1 Ионная батарейка, 2 Рубина
+            RecipeData recipe = new RecipeData()
+            {
+                craftAmount = 1,
+                Ingredients = new List<Ingredient>()
+                {
+                    new Ingredient(TechType.HeatBlade, 1),
+                    new Ingredient(TechType.PrecursorIonBattery, 1),
+                    new Ingredient(TechType.AluminumOxide, 2)
+                }
+            };
+
+            // Привязка к Модификационной Станции
+            ionKnifePrefab.SetRecipe(recipe)
+                .WithFabricatorType(CraftTree.Type.Workbench)
+                .WithStepsToFabricatorTab(new string[] { "Body" });
+
+            // Автоматическое открытие чертежа при изучении Ионной батарейки
+            ionKnifePrefab.SetUnlock(TechType.PrecursorIonBattery);
+
+            ionKnifePrefab.Register();
+
+            Harmony harmony = new Harmony("com.username.ionarchitectknife");
+            harmony.PatchAll();
+
+            Logger.LogInfo("Мод Ion Architect Knife успешно загружен вместе с локализованной статьей КПК!");
+
+        }
+
+        private void ModifyKnifeAppearance(GameObject prefab)
+        {
+            // ==========================================
+            // БАЗОВАЯ НАСТРОЙКА ИНСТРУМЕНТА (Ножа)
+            // ==========================================
+
+            // 1. Добавляем компонент ножа
+            Knife knife = prefab.AddComponent<Knife>();
+
+            // 2. Настраиваем урон и дистанцию
+            knife.damage = 250f;
+            knife.attackDist = 3.0f;
+
+            // 4. Настраиваем физику и возможность подбирать предмет
+            Pickupable pickupable = prefab.GetComponent<Pickupable>();
+            if (pickupable == null)
+            {
+                pickupable = prefab.AddComponent<Pickupable>();
+            }
+            pickupable.isPickupable = true;
+
+            // ==========================================
+
+            // Настройка неонового свечения лезвия
+            var renderers = prefab.GetComponentsInChildren<Renderer>(true);
+            foreach (var renderer in renderers)
+            {
+                foreach (var material in renderer.materials)
+                {
+                    if (material.shader.name.Contains("MarmosetUBER"))
+                    {
+                        material.EnableKeyword("_EMISSION");
+                        Color architectGlowColor = new Color(0.0f, 1.0f, 0.6f) * 4.0f;
+                        material.SetColor("_EmissionColor", architectGlowColor);
+                        if (material.HasProperty("_Illum")) material.SetTexture("_Illum", Texture2D.whiteTexture);
+                    }
+                }
+            }
+
+            // Мягкий свет вокруг игрока
+            Light glowLight = prefab.AddComponent<Light>();
+            glowLight.type = LightType.Point;
+            glowLight.color = new Color(0.0f, 1.0f, 0.6f);
+            glowLight.range = 3.0f;
+            glowLight.intensity = 1.5f;
+
+            // Система частиц (маленькие молнии Архитекторов)
+            GameObject fxObject = new GameObject("IonSparksFX");
+            fxObject.transform.SetParent(prefab.transform, false);
+            fxObject.transform.localPosition = new Vector3(0, 0, 0.3f);
+
+            ParticleSystem ps = fxObject.AddComponent<ParticleSystem>();
+            var main = ps.main;
+            main.duration = 1f;
+            main.loop = true;
+            main.startLifetime = 0.2f;
+            main.startSpeed = 0.5f;
+            main.startSize = 0.05f;
+            main.startColor = new Color(0.0f, 1.0f, 0.7f, 0.8f);
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+
+            var emission = ps.emission;
+            emission.rateOverTime = 8f;
+
+            // НАСТРОЙКА ФОРМЫ (Исправлено под стандартный синтаксис Unity)
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Box; // Используем форму куба/коробки
+            shape.boxThickness = new Vector3(1f, 0f, 0f);  // Схлопываем форму до одной линии по оси X
+            shape.scale = new Vector3(0.4f, 0f, 0f);       // Задаем длину нашей линии (0.4)
+
+            var noise = ps.noise;
+            noise.enabled = true;
+            noise.frequency = 5f;
+            noise.strength = 1.5f;
+
+            ParticleSystemRenderer psRenderer = fxObject.GetComponent<ParticleSystemRenderer>();
+            psRenderer.material = new Material(Shader.Find("Sprites/Default"));
+
+            // Добавляем аудио-эмиттер для постоянного потрескивания энергии
+            FMOD_StudioEventEmitter ambientEmitter = prefab.AddComponent<FMOD_StudioEventEmitter>();
+            ambientEmitter.path = AmbientCracklySoundPath;
+        }
+    }
+    // Патч, открывающий запись в КПК в момент первого крафта на модификационной станции
+    [HarmonyPatch(typeof(Crafter))]
+    // Передаем имя метода строкой, чтобы обойти приватный уровень защиты
+    [HarmonyPatch("OnCraftingEnd")]
+    public static class Crafter_OnCraftingEnd_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(TechType techType)
+        {
+            // Если скрафченный предмет — наш Ионный Нож
+            if (techType == MainPlugin.IonKnifeInfo.TechType)
+            {
+                // Добавляем статью в КПК (игра сама проверит, первая ли это сборка, 
+                // и покажет красивое всплывающее уведомление)
+                PDAEncyclopedia.Add("IonKnife_PDATitle", true, true);
+            }
+        }
+    }
+    // Патч на урон, дистанцию и замену звука атаки
+    [HarmonyPatch(typeof(Knife))]
+    [HarmonyPatch(nameof(Knife.Awake))]
+    public static class Knife_Awake_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Knife __instance)
+        {
+            Pickupable pickupable = __instance.GetComponent<Pickupable>();
+            if (pickupable != null && pickupable.GetTechType() == MainPlugin.IonKnifeInfo.TechType)
+            {
+                __instance.damage = 250f;
+                __instance.attackDist = 3.0f;
+
+                // 1. Создаем ассет звука FMOD
+                FMODAsset customHitSound = ScriptableObject.CreateInstance<FMODAsset>();
+                customHitSound.path = MainPlugin.StrikeSoundPath;
+
+                // 2. Через Harmony проникаем в приватное поле "hitSound" и меняем его
+                HarmonyLib.AccessTools.Field(typeof(Knife), "hitSound").SetValue(__instance, customHitSound);
+            }
+        }
+    }
+    // Патч на ВКЛЮЧЕНИЕ потрескивания, когда нож берут в руку
+    [HarmonyPatch(typeof(PlayerTool))]
+    [HarmonyPatch(nameof(PlayerTool.OnDraw))]
+    public static class PlayerTool_OnDraw_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(PlayerTool __instance)
+        {
+            if (__instance.pickupable != null && __instance.pickupable.GetTechType() == MainPlugin.IonKnifeInfo.TechType)
+            {
+                // Возвращаем класс FMOD_StudioEventEmitter
+                FMOD_StudioEventEmitter emitter = __instance.gameObject.GetComponent<FMOD_StudioEventEmitter>();
+                if (emitter != null)
+                {
+                    emitter.StartEvent(); // Используем метод StartEvent вместо Play
+                }
+            }
+        }
+    }
+    // Патч на ВЫКЛЮЧЕНИЕ потрескивания, когда нож убирают из руки
+    [HarmonyPatch(typeof(PlayerTool))]
+    [HarmonyPatch(nameof(PlayerTool.OnHolster))]
+    public static class PlayerTool_OnHolster_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(PlayerTool __instance)
+        {
+            if (__instance.pickupable != null && __instance.pickupable.GetTechType() == MainPlugin.IonKnifeInfo.TechType)
+            {
+                // Возвращаем класс FMOD_StudioEventEmitter
+                FMOD_StudioEventEmitter emitter = __instance.gameObject.GetComponent<FMOD_StudioEventEmitter>();
+                if (emitter != null)
+                {
+                    emitter.Stop(); // Используем метод StopEvent вместо Stop
+                }
+            }
+        }
+    }
+
+}
